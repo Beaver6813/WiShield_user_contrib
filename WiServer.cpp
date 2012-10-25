@@ -36,9 +36,15 @@
 
  *****************************************************************************/
 
-
 #include "Arduino.h"
 #include "WiServer.h"
+
+
+#define DEBUG
+#define DEBUG_VERBOSE
+
+/* SAM ADDITION 231012 */
+#include "DebugPrint.h"
 
 extern "C" {
     #include "g2100.h"
@@ -49,6 +55,29 @@ extern "C" {
 	void stack_init(void);
 	void stack_process(void);
 }
+
+#ifdef DEBUG
+const char f_wic[] PROGMEM = "\nWiServer init called";
+const char f_hyphen[] PROGMEM = " - ";
+const char f_of[] PROGMEM = " of ";
+const char f_unf[] PROGMEM = "URL Not Found";
+const char f_gcf[] PROGMEM = "->Got connection request for ";
+const char f_ngr[] PROGMEM = "->New GET/POSTrequest()";
+const char f_qgr[] PROGMEM = "->Queue GET/POSTrequest()";
+const char f_fuc[] PROGMEM = "->Failed uip_connect()";
+#endif 
+
+const char f_tx[] PROGMEM = "-->TX ";
+const char f_bytes[] PROGMEM = " bytes";
+const char f_sc[] PROGMEM = "Server connected";
+const char f_prf[] PROGMEM = "Processing request for ";
+const char f_scc[] PROGMEM = "Server connection closed";
+const char f_ct[] PROGMEM = "-->Connected to ";
+const char f_rx[] PROGMEM = "\n<--RX ";
+const char f_bf[] PROGMEM = " bytes from ";
+const char f_ctap[] PROGMEM = "-->Connected to access point";
+const char f_init_failure[] PROGMEM = "->Init failed to connect. Reset WiFi hardware.";
+/* END SAM ADDITION 231012 */
 
 #ifdef APP_WISERVER
 
@@ -74,6 +103,15 @@ extern const prog_char base64Chars[];
 /* GregEigsti - jrwifi submitted WiServer stability fix */
 static char get_string_global[WISERVER_GET_STRING_MAX];
 
+/* SAM ADDITION 231012 */
+extern long mainCount;
+boolean TCP_client_connected = 0;
+boolean TCP_new_connection = 0;
+boolean TCP_connection_terminated = 0;
+
+unsigned long guard_timer;
+/* END SAM ADDITION 231012 */
+
 /* Application's callback function for serving pages */
 pageServingFunction callbackFunc;
 
@@ -83,8 +121,30 @@ char txPin = -1;
 /* Digital output pin to indicate RX activity */
 char rxPin = -1;
 
-void Server::init(pageServingFunction function) {
+/* SAM ADDITION 231012 */
+/* Enables basic log messages via Serial */
+boolean verbose = false;
+/* Timestamp when last connection attempt was started */
+long connectTime = 0;
+#define DISCONNECTED 0
+#define CONNECTING 1
+#define CONNECTED 2
 
+#define CONNECTION_TIMEOUT 15
+// Current connection state
+char state = DISCONNECTED;
+
+/* Checks if the WiShield is currently connected */
+boolean isConnected() {
+	return (zg_get_conn_state() == 1);	
+}
+/* END SAM ADDITION 231012 */
+
+void Server::init(pageServingFunction function) {
+        #ifdef DEBUG
+            verbose = true;
+            DebugPrintF(f_wic);	// JM "\nWiServer init called"
+        #endif // DEBUG
 	// WiShield init
 	zg_init();
 
@@ -98,14 +158,31 @@ void Server::init(pageServingFunction function) {
 	PCICR |= (1<<PCIE0);
 	PCMSK0 |= (1<<PCINT0);
 #endif
-
-	while(zg_get_conn_state() != 1) {
-		zg_drv_process();
+// JM - add guard timer to connection attempt to reset WiFi hardware if unable to connect
+	guard_timer = millis() + 45000L;	// Allow 45 seconds to connect to access point
+	while(zg_get_conn_state() != 1) {	// Loop until connected
+	  zg_drv_process();				// Process connection to access point
+	  if (guard_timer <= millis()){		// connection timed out
+	    if (verbose) DebugPrintF(f_init_failure);
+	    zg_init();					// call WiShield init again
+	    guard_timer = millis() + 45000L;	// try again for another 45 seconds
+	    #ifdef USE_DIG0_INTR
+	    attachInterrupt(0, zg_isr, LOW);
+	    #endif
+	    #ifdef USE_DIG8_INTR
+	    // set digital pin 8 on Arduino
+	    // as ZG interrupt pin
+	    PCICR |= (1<<PCIE0);
+	    PCMSK0 |= (1<<PCINT0);
+	    #endif
+	    }
 	}
-
+#ifdef DEBUG
+	//DebugPrintF(f_ctap);	// JM "\nConnected to access point"
+#endif // DEBUG
 	// Start the stack
 	stack_init();
-
+Serial.println("Post Stack");
 	// Store the callback function for serving pages
 	// and start listening for connections on port 80 if
 	// the function is non-null
@@ -151,7 +228,9 @@ void setRXPin(byte value) {
 	if (rxPin != -1) digitalWrite(rxPin, value);
 }
 
-
+void Server::enableVerboseMode(boolean enable) {
+    verbose = enable;
+}
 
 /******* Generic printing and sending functions ********/
 
@@ -242,19 +321,20 @@ void send() {
 	len = len < 0 ? 0 : len;
 	len = len > (int)uip_conn->mss ? (int)uip_conn->mss : len;
 
-#ifdef DEBUG
-	Serial.print("TX ");
-	Serial.print(len);
-	Serial.println(" bytes");
-#endif // DEBUG
+	if (verbose) {
+		DebugPrintFO(f_tx);		// Serial.print("-->TX ");
+		Serial.print(len);
+		DebugPrintF (f_bytes);	// Serial.print (" bytes");
+	}
 
-#ifdef DEBUG_VERBOSE
+#ifdef DEBUG
 	Serial.print(app->ackedCount);
-	Serial.print(" - ");
+	DebugPrintFO(f_hyphen);		// Serial.print(" - ");
 	Serial.print(app->ackedCount + len - 1);
-	Serial.print(" of ");
-	Serial.println((int)app->cursor);
-#endif // DEBUG_VERBOSE
+	DebugPrintFO(f_of);			// Serial.print(" of ");
+	Serial.print((int)app->cursor);
+	DebugPrint((char *)"");
+#endif // DEBUG
 
 	// Send the real bytes from the virtual buffer and record how many were sent
 	uip_send(uip_appdata, len);
@@ -362,9 +442,9 @@ void sendPage() {
 		uip_conn->appstate.cursor = 0;
 		WiServer.println_P(httpNotFound);
 		WiServer.println();
-#ifdef DEBUG_VERBOSE
- 		Serial.println("URL Not Found");
-#endif // DEBUG_VERBOSE
+#ifdef DEBUG
+ 		DebugPrintF(f_unf);	// "URL Not Found";
+#endif // DEBUG
 	}
 	// Send the 'real' bytes in the buffer
 	send();
@@ -401,9 +481,9 @@ void server_task_impl() {
 
 	if (uip_connected()) {
 
-#ifdef DEBUG
-		Serial.println("Server connected");
-#endif // DEBUG
+		if (verbose) {
+			DebugPrintF(f_sc);	// JM "Server connected";
+		}
 
 		// Initialize the server request data
 		app->ackedCount = 0;
@@ -414,10 +494,10 @@ void server_task_impl() {
  		setRXPin(HIGH);
 		// Process the received packet and check if a valid GET request had been received
 		if (processPacket((char*)uip_appdata, uip_datalen()) && app->request) {
-#ifdef DEBUG
-			Serial.print("Processing request for ");
-			Serial.println((char*)app->request);
-#endif // DEBUG
+			if (verbose) {
+				DebugPrintFO(f_prf);	// JM "Processing request for ";
+				DebugPrint((char*)app->request);
+			}
 			sendPage();
 		}
 	}
@@ -449,9 +529,9 @@ void server_task_impl() {
 
 		// Check if a URL was stored for this connection
 		if (app->request != NULL) {
-#ifdef DEBUG
-			Serial.println("Server connection closed");
-#endif // DEBUG
+			if (verbose) {
+				DebugPrintF(f_scc);	// "Server connection closed"
+			}
 			// Free RAM and clear the pointer
 			// GregEigsti - jrwifi submitted WiServer stability fix
 			// free(app->request);
@@ -473,6 +553,9 @@ void Server::submitRequest(GETrequest *req) {
 	if (queue == NULL) {
 		// Point to the new request
 		queue = req;
+        #ifdef DEBUG
+		DebugPrintF(f_ngr);			// JM - new GET/POSTrequest
+#endif
 	} else {
 		// Find the tail of the queue
 		GETrequest* r = queue;
@@ -481,6 +564,9 @@ void Server::submitRequest(GETrequest *req) {
 		}
 		// Append the new request
 		r->next = req;
+        #ifdef DEBUG
+		DebugPrintF(f_qgr);			// JM - queue GETrequest
+#endif
 	}
 	// Set the request as being active
 	req->active = true;
@@ -580,10 +666,12 @@ void client_task_impl() {
 
 	if (uip_connected()) {
 
-#ifdef DEBUG
-		Serial.print("Connected to ");
-		Serial.println(req->hostName);
-#endif // DEBUG
+		TCP_client_connected = 1;		// JM - indicate that an end point client connection is in progress
+		TCP_new_connection = 1;		// JM - indicate a new connection was made - cleared by application
+		if (verbose) {
+			DebugPrintFO(f_ct); 	// Serial.print("-->Connected to ");
+			DebugPrint((char *)(req->hostName));
+		}
 		app->ackedCount = 0;
 		sendRequest();
 	}
@@ -609,12 +697,12 @@ void client_task_impl() {
  	if (uip_newdata())  {
  		setRXPin(HIGH);
 
-#ifdef DEBUG
-		Serial.print("RX ");
-		Serial.print(uip_datalen());
-		Serial.print(" bytes from ");
-		Serial.println(req->hostName);
-#endif // DEBUG
+		if (verbose) {
+			DebugPrintFO(f_rx);			// Serial.print("\n<--RX ");
+			Serial.print(uip_datalen());
+			DebugPrintFO(f_bf);			// Serial.print(" bytes from ");
+			DebugPrint((char *)req->hostName);
+		}
 		// Check if the sketch cares about the returned data
 	 	if ((req->returnFunc) && (uip_datalen() > 0)){
 			// Call the sketch's callback function
@@ -624,10 +712,13 @@ void client_task_impl() {
 
 	if (uip_aborted() || uip_timedout() || uip_closed()) {
 		if (req != NULL) {
-#ifdef DEBUG
-			Serial.print("Ended connection with ");
-			Serial.println(req->hostName);
-#endif // DEBUG
+			TCP_client_connected = 0;			// JM end point connection no longer in progress
+			TCP_connection_terminated = 1;		// JM indicate a connection attempt or connection terminated
+			if (verbose) {
+				Serial.print("-->Ended connection with ");
+				DebugPrint((char *)req->hostName);
+			}
+
 			if (req->returnFunc) {
 				// Call the sketch's callback function with 0 bytes to indicate End Of Data
 				req->returnFunc((char*)uip_appdata, 0);
@@ -703,39 +794,111 @@ void server_app_task() {
 	}
 }
 
+boolean Server::checkConnection(int seconds) {
+	
+	long endTime = millis() + (seconds * 1000);
+	
+	while (!this->server_task() & ((seconds == -1) || (millis() < endTime)));
+	
+	return state == CONNECTED;
+	
+}
 
 /*
  * Called by the sketch's main loop
  */
-void Server::server_task() {
-
-	// Run the stack state machine
-	stack_process();
-
+/*
+ * Called by the sketch's main loop
+ */
+boolean Server::server_task() {
+		
 	// Run the driver
 	zg_drv_process();
+	
+	if (state == CONNECTED) {
+		
+		if (isConnected()) {
+			// Run the stack state machine
+			stack_process();
+			
+	#ifdef ENABLE_CLIENT_MODE
+			// Check if there is a pending client request
+			if (queue) {
+				// Attempt to connect to the server
+				struct uip_conn *conn = uip_connect(&(queue->ipAddr), queue->port);
 
-#ifdef ENABLE_CLIENT_MODE
-	// Check if there is a pending client request
-	if (queue) {
-		// Attempt to connect to the server
-		struct uip_conn *conn = uip_connect(&(queue->ipAddr), queue->port);
+				if (conn != NULL) {
+	#ifdef DEBUG
+					Serial.print("Got connection for ");
+					Serial.println(queue->hostName);
+	#endif // DEBUG
 
-		if (conn != NULL) {
-#ifdef DEBUG_VERBOSE
-			Serial.print("Got connection for ");
-			Serial.println(queue->hostName);
-#endif // DEBUG_VERBOSE
+					// Attach the request object to its connection
+					conn->appstate.request = queue;
+					// Move the head of the queue to the next request in the queue
+					queue = queue->next;
+					// Clear the next pointer of the connected request
+					((GETrequest*)conn->appstate.request)->next = NULL;
+				}
+			}
+		} else {
+			state = DISCONNECTED;
+			Serial.println("Connection lost, aborting uip");
+			uip_abort();
+			stack_process();
+		}
+	}	
+#endif // ENABLE_CLIENT_MODE
 
-			// Attach the request object to its connection
-			conn->appstate.request = queue;
-			// Move the head of the queue to the next request in the queue
-			queue = queue->next;
-			// Clear the next pointer of the connected request
-			((GETrequest*)conn->appstate.request)->next = NULL;
+
+	// Check if we need to initiate a connection
+	if (state == DISCONNECTED) {
+		Serial.println("Init WiShield");
+
+		// WiShield init
+		zg_init();
+		
+#ifdef USE_DIG0_INTR
+		attachInterrupt(0, zg_isr, LOW);
+#endif
+		
+#ifdef USE_DIG8_INTR
+		// set digital pin 8 on Arduino
+		// as ZG interrupt pin
+		PCICR |= (1<<PCIE0);
+		PCMSK0 |= (1<<PCINT0);
+#endif
+		
+		state = CONNECTING;	
+		connectTime = millis();
+		Serial.print ("Connecting...");
+	}
+	
+	// Check if we're waiting for the connection to be established
+	if (state == CONNECTING) {
+		
+		// Move things along
+		zg_drv_process();
+
+		// Check if we got a connection
+		if (isConnected()) {
+			state = CONNECTED;
+			Serial.println("Connected!");
+
+			// Start the stack
+			stack_init();
+			// Listen for server requests on port 80 if appropriate
+			if (callbackFunc) {
+				uip_listen(HTONS(80));
+			}	
+		} else if (millis() - connectTime > CONNECTION_TIMEOUT * 1000) {
+				// No success, try restarting the WiShield
+				state = DISCONNECTED;
+			Serial.print("Connect failed, restarting WiShield");
 		}
 	}
-#endif // ENABLE_CLIENT_MODE
+
+	return (state == CONNECTED);
 }
 
 // Single instance of the server

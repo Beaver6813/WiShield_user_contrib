@@ -40,6 +40,22 @@
 #include "g2100.h"
 #include "spi.h"
 
+#define DEBUG
+#define DEBUG_VERBOSE
+
+extern void DebugPrint(char *msg);
+extern void DebugPrintF(char *msg);
+extern void DebugPrintFO(char *msg);
+extern void debug_print_flash(const char *s);
+
+#ifdef DEBUG
+const char f_wc1[] PROGMEM = "\n-->WiFi connected - 1";
+const char f_wd1[] PROGMEM = "\n-->WiFi disconnected - 1";
+const char f_wd2[] PROGMEM = "\n-->WiFi disconnected - 2";
+const char f_wc2[] PROGMEM = "\n-->WiFi connected - 2";
+const char f_arowm[] PROGMEM = "\n-->Attempting re-init of WiFi module";
+#endif
+
 static U8 mac[6];
 static U8 zg_conn_status;
 
@@ -56,6 +72,8 @@ static U16 lastRssi;
 static U8 scan_cnt;
 static U8 wpa_psk_key[ZG_MAX_PMK_LEN];
 static U8 ssid_len;
+static long reconnTime;
+unsigned int reconnCount;
 
 void zg_init()
 {
@@ -65,6 +83,8 @@ void zg_init()
 	clr = SPSR;
 	clr = SPDR;
 
+        reconnTime = 0;			// JM no reconnection in progress
+	reconnCount = 0;
 	intr_occured = 0;
 	intr_valid = 0;
 	lastRssi = 0;
@@ -540,6 +560,11 @@ void zg_drv_process()
 				case ZG_MAC_SUBTYPE_MGMT_REQ_CONNECT:
 					LEDConn_on();
 					zg_conn_status = 1;	// connected
+                    			reconnTime = 0;		// JM connected - stop reconnect timer
+                                        #ifdef DEBUG
+                                            DebugPrintF(f_wc1);	// JM "\n-->WiFi connected - 1"
+                                        #endif   
+                                        
 					break;
 				default:
 					break;
@@ -555,7 +580,10 @@ void zg_drv_process()
 			case ZG_MAC_SUBTYPE_MGMT_IND_DEAUTH:
 				LEDConn_off();
 				zg_conn_status = 0;	// lost connection
-
+				reconnTime = millis() + 5000L;	// JM try to reconnect in 5 seconds
+                                #ifdef DEBUG
+                                    DebugPrintF(f_wd1);	// JM "\n-->WiFi disconnected - 1"
+                                #endif   
 				//try to reconnect
 				zg_drv_state = DRV_STATE_START_CONN;
 				break;
@@ -566,10 +594,25 @@ void zg_drv_process()
 					if (status == 1 || status == 5) {
 						LEDConn_off();
 						zg_conn_status = 0;	// not connected
+                        			reconnTime = millis() + 5000L;	// JM try to reconnect in 5 seconds
+                                                #ifdef DEBUG
+                                                    DebugPrintF(f_wd2);	// JM "\n-->WiFi disconnected - 2";
+                                                #endif   
 					}
 					else if (status == 2 || status == 6) {
 						LEDConn_on();
 						zg_conn_status = 1;	// connected
+                                                reconnTime = 0;				// JM connected - stop reconnect timer
+                                                #ifdef DEBUG
+                                                    DebugPrintF(f_wc2);	// JM "\n-->WiFi connected - 2"
+                                                #endif
+                                                DebugPrint("Entering Loop");
+                                                int testloop = 0;
+                                                while(testloop < 2000) {
+                                                    testloop++;
+                                                }
+                                                DebugPrint("Re-initialising module");	// JM "\n-->WiFi connected - 2"
+                                                zg_init();
 					}
 				}
 				break;
@@ -659,12 +702,12 @@ void zg_drv_process()
 		zg_buf[3] = 0x01;	// 0x01 - enable; 0x00 - disable
 		zg_buf[4] = 10;		// num retries to reconnect
 		zg_buf[5] = 0x10 | 0x02 | 0x01;	// 0x10 -	enable start and stop indication messages
-										// 		 	from G2100 during reconnection
-										// 0x02 -	start reconnection on receiving a deauthentication
-										// 			message from the AP
-										// 0x01 -	start reconnection when the missed beacon count
-										// 			exceeds the threshold. uses default value of
-										//			100 missed beacons if not set during initialization
+                // 		 	from G2100 during reconnection
+                // 0x02 -	start reconnection on receiving a deauthentication
+                // 			message from the AP
+                // 0x01 -	start reconnection when the missed beacon count
+                // 			exceeds the threshold. uses default value of
+                //			100 missed beacons if not set during initialization
 		zg_buf[6] = 0;
 		spi_transfer(zg_buf, 7, 1);
 
@@ -705,8 +748,8 @@ void zg_drv_process()
 		spi_transfer(zg_buf, 1, 1);
 
 		zg_drv_state = DRV_STATE_IDLE;
+    }
 		break;
-	}
 	case DRV_STATE_PROCESS_RX:
 		zg_recv(zg_buf, &zg_buf_len);
 		rx_ready = 1;
@@ -714,6 +757,17 @@ void zg_drv_process()
 		zg_drv_state = DRV_STATE_IDLE;
 		break;
 	case DRV_STATE_IDLE:
+        if (reconnTime){		// JM We have been disconnected
+		  if (reconnTime < millis()){
+              #ifdef DEBUG
+		    DebugPrint("\n-->Attempting re-init of WiFi module");	// "\n-->Attempting re-init of WiFi module"
+#endif
+		    reconnCount++;		// Count number of reconnection attempts
+		    zg_init();			// reset WiFi and attempt to reconnect to access point
+		    					// reconnTime = 0 is performed in zg_init() to avoid loop
+
+		  }
+		}
 		break;
 	}
 }

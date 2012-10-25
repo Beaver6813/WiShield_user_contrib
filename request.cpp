@@ -40,6 +40,28 @@ char twitterURL[] = {"/statuses/update.xml"};
 
 
 GETrequest::GETrequest(uint8* ipAddr, int port, char* hostName, char* URL) {
+    #if 0
+	// Store IP address using the uIP type
+	uip_ipaddr(this->ipAddr, ipAddr[0], ipAddr[1], ipAddr[2], ipAddr[3]);
+	// Store port in network order
+	this->port = htons(port);
+	// Store host name and URL
+	this->hostName = hostName;
+	this->URL = URL;
+	
+	// Set remaining members to NULL
+	this->auth = NULL;
+	this->returnFunc = NULL;
+	this->active = false;
+	this->body = NULL;
+	this->bodyPreamble = NULL;
+	this->next = NULL;
+#endif
+	this->init(ipAddr,port,hostName,URL);	// JM - call the initialization function
+}
+
+// JM - New function to reset GETrequest that failed
+void GETrequest::init(uint8* ipAddr, int port, char* hostName, char* URL) {	
 	// Store IP address using the uIP type
 	uip_ipaddr(this->ipAddr, ipAddr[0], ipAddr[1], ipAddr[2], ipAddr[3]);
 	// Store port in network order
