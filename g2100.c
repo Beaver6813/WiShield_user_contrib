@@ -271,6 +271,9 @@ void zg_process_isr()
 				}
 				else {
 					// Too Big, ignore it and continue
+                    #ifdef DEBUG
+                        DebugPrintF(f_igp);
+                    #endif
 					intr_valid = 0; 
 				}
 
