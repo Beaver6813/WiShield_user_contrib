@@ -54,6 +54,7 @@ const char f_wd1[] PROGMEM = "\n-->WiFi disconnected - 1";
 const char f_wd2[] PROGMEM = "\n-->WiFi disconnected - 2";
 const char f_wc2[] PROGMEM = "\n-->WiFi connected - 2";
 const char f_arowm[] PROGMEM = "\n-->Attempting re-init of WiFi module";
+const char f_igp[] PROGMEM = "\n-->Packet too large - Ignoring";
 #endif
 
 static U8 mac[6];
