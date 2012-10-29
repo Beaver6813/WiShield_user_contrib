@@ -256,28 +256,6 @@ void zg_process_isr()
 				intr_state = ZG_INTR_ST_RD_CTRL_REG;
 				break;
 			}
-			// *************************************************************************************
-			// Released version of WiShield library code (ZG_INTR_ST_RD_CTRL_REG)
-			// susceptible to "packet too large issue" but allows
-			// WiServer/WebServer to work.  Needs to be replaced with 
-			// good fix.
-			case ZG_INTR_ST_RD_CTRL_REG:
-			{
-				U16 rx_byte_cnt = (0x0000 | (hdr[1] << 8) | hdr[2]) & 0x0fff;
-
-				zg_buf[0] = ZG_CMD_RD_FIFO;
-				spi_transfer(zg_buf, rx_byte_cnt + 1, 1);
-
-				hdr[0] = ZG_CMD_RD_FIFO_DONE;
-				spi_transfer(hdr, 1, 1);
-
-				intr_valid = 1;
-
-				intr_state = 0;
-				break;
-			}
-			// Bad "packet too large" fix - killed WiServer WebServer
-			/*
 			case ZG_INTR_ST_RD_CTRL_REG:
 			{
       			// Get the size of the incoming packet
@@ -304,7 +282,6 @@ void zg_process_isr()
 				intr_state = 0;
 				break;
 			}
-			*/
 			// *************************************************************************************
 		}
 	} while (intr_state);
