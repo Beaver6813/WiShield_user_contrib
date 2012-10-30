@@ -83,7 +83,7 @@ class GETrequest
 		 */
 		GETrequest(uint8* ipAddr, int port, char* hostName, char* URL);
         
-                void init(uint8* ipAddr, int port, char* hostName, char* URL);	// JM - initialize the GETrequest
+        void init(uint8* ipAddr, int port, char* hostName, char* URL);	// JM - initialize the GETrequest
 
 		/*
 		 * Submits the request and prevents further changes to the request until it has been
@@ -183,13 +183,6 @@ class Server: public Print
 		 * @param pageServerFunc name of the sketch's page serving function
 		 */
 		void init(pageServingFunction function);
-        
-                /*
-		 * Enables or disables verbose mode.  If verbose mode is true, then WiServer
-		 * will output log info via the Serial class.  Verbose mode is disabled by
-		 * default, but is automatically enabled if DEBUG is defined
-		 */
-		void enableVerboseMode(boolean enable);
 
 		/**
 		 * The server task method (must be called in the main loop to run the WiServer)
