@@ -41,14 +41,12 @@
 #include "spi.h"
 
 #define DEBUG
-#define DEBUG_VERBOSE
 
+#ifdef DEBUG
 extern void DebugPrint(char *msg);
 extern void DebugPrintF(char *msg);
 extern void DebugPrintFO(char *msg);
-extern void debug_print_flash(const char *s);
 
-#ifdef DEBUG
 const char f_wc1[] PROGMEM = "\n-->WiFi connected - 1";
 const char f_wd1[] PROGMEM = "\n-->WiFi disconnected - 1";
 const char f_wd2[] PROGMEM = "\n-->WiFi disconnected - 2";
@@ -79,12 +77,9 @@ unsigned int reconnCount;
 void zg_init()
 {
 	U8 clr;
-
 	ZG2100_SpiInit();
-	clr = SPSR;
 	clr = SPDR;
-
-        reconnTime = 0;			// JM no reconnection in progress
+    reconnTime = 0;
 	reconnCount = 0;
 	intr_occured = 0;
 	intr_valid = 0;
@@ -96,7 +91,6 @@ void zg_init()
 	cnf_pending = 0;
 	zg_buf = uip_buf;
 	zg_buf_len = UIP_BUFSIZE;
-
 	zg_chip_reset();
 	zg_interrupt2_reg();
 	zg_interrupt_reg(0xff, 0);
@@ -256,14 +250,14 @@ void zg_process_isr()
 
 				intr_state = ZG_INTR_ST_RD_CTRL_REG;
 				break;
-			}
+			}		
 			case ZG_INTR_ST_RD_CTRL_REG:
 			{
       			// Get the size of the incoming packet
 				U16 rx_byte_cnt = (0x0000 | (hdr[1] << 8) | hdr[2]) & 0x0fff;
 
 				// Check if our buffer is large enough for packet
-    	        if(rx_byte_cnt + 1 < (U16)UIP_BUFSIZE ) {
+    	        if(rx_byte_cnt+1 < (U16)UIP_BUFSIZE ) {
 					zg_buf[0] = ZG_CMD_RD_FIFO;
 					// Copy ZG2100 buffer contents into zg_buf (uip_buf)             
 					spi_transfer(zg_buf, rx_byte_cnt + 1, 1);
@@ -271,7 +265,7 @@ void zg_process_isr()
 					intr_valid = 1;
 				}
 				else {
-					// Too Big, ignore it and continue
+                    // Too Big, ignore it and continue
                     #ifdef DEBUG
                         DebugPrintF(f_igp);
                     #endif
@@ -286,6 +280,7 @@ void zg_process_isr()
 				intr_state = 0;
 				break;
 			}
+			
 			// *************************************************************************************
 		}
 	} while (intr_state);
@@ -575,25 +570,18 @@ void zg_drv_process()
 					if (status == 1 || status == 5) {
 						LEDConn_off();
 						zg_conn_status = 0;	// not connected
-                        			reconnTime = millis() + 5000L;	// JM try to reconnect in 5 seconds
-                                                #ifdef DEBUG
-                                                    DebugPrintF(f_wd2);	// JM "\n-->WiFi disconnected - 2";
-                                                #endif   
+                        reconnTime = millis() + 5000L;	// JM try to reconnect in 5 seconds
+                        #ifdef DEBUG
+                            DebugPrintF(f_wd2);	// JM "\n-->WiFi disconnected - 2";
+                        #endif   
 					}
 					else if (status == 2 || status == 6) {
 						LEDConn_on();
 						zg_conn_status = 1;	// connected
-                                                reconnTime = 0;				// JM connected - stop reconnect timer
-                                                #ifdef DEBUG
-                                                    DebugPrintF(f_wc2);	// JM "\n-->WiFi connected - 2"
-                                                #endif
-                                                DebugPrint("Entering Loop");
-                                                int testloop = 0;
-                                                while(testloop < 2000) {
-                                                    testloop++;
-                                                }
-                                                DebugPrint("Re-initialising module");	// JM "\n-->WiFi connected - 2"
-                                                zg_init();
+                        reconnTime = 0;				// JM connected - stop reconnect timer
+                        #ifdef DEBUG
+                            DebugPrintF(f_wc2);	// JM "\n-->WiFi connected - 2"
+                        #endif
 					}
 				}
 				break;
@@ -738,15 +726,14 @@ void zg_drv_process()
 		zg_drv_state = DRV_STATE_IDLE;
 		break;
 	case DRV_STATE_IDLE:
-        if (reconnTime){		// JM We have been disconnected
+        if (reconnTime){		//We have been disconnected
 		  if (reconnTime < millis()){
-              #ifdef DEBUG
-		    DebugPrint("\n-->Attempting re-init of WiFi module");	// "\n-->Attempting re-init of WiFi module"
-#endif
+            #ifdef DEBUG
+                DebugPrintF(f_arowm);	// "\n-->Attempting re-init of WiFi module"
+            #endif
 		    reconnCount++;		// Count number of reconnection attempts
 		    zg_init();			// reset WiFi and attempt to reconnect to access point
 		    					// reconnTime = 0 is performed in zg_init() to avoid loop
-
 		  }
 		}
 		break;
